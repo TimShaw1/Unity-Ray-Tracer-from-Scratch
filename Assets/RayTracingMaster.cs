@@ -4,8 +4,8 @@ using UnityEngine;
 
 public class RayTracingMaster : MonoBehaviour
 {
-    public ComputeShader RayTracingShader;
-    private RenderTexture _target;
+    public ComputeShader RayTracingShader; 
+    private RenderTexture _target; //
     private Camera _camera;
 
     private uint _currentSample = 0;
