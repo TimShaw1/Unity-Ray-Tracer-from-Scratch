@@ -9,15 +9,31 @@ float4x4 _CameraInverseProjection;
 
 Texture2D<float4> _SkyBoxTexture;
 SamplerState sampler_SkyBoxTexture;
+
 static const float PI = 3.14159265f;
+int numReflections = 8;
 
 float2 _PixelOffset;
+
+float4 _DirectionalLight;
 
 struct Ray
 {
     float3 origin;
     float3 direction;
+    float3 energy;
 };
+
+struct Sphere
+{
+    float3 position;
+    float radius;
+    float3 albedo;
+    float3 specular;
+    float random;
+};
+
+StructuredBuffer<Sphere> _Spheres;
 
 // Creates a ray with an origin and a direction
 Ray CreateRay(float3 origin, float3 direction)
@@ -25,6 +41,7 @@ Ray CreateRay(float3 origin, float3 direction)
     Ray ray;
     ray.origin = origin;
     ray.direction = direction;
+    ray.energy = float3(1.0f, 1.0f, 1.0f);
     return ray;
 }
 
@@ -52,6 +69,9 @@ struct RayHit
     float3 position;
     float distance;
     float3 normal;
+
+    float3 albedo;
+    float3 specular;
 };
 
 RayHit CreateRayHit()
@@ -60,6 +80,9 @@ RayHit CreateRayHit()
     hit.position = float3(0.0f, 0.0f, 0.0f);
     hit.distance = 1.#INF;
     hit.normal = float3(0.0f, 0.0f, 0.0f);
+
+    hit.albedo = float3(0.0f, 0.0f, 0.0f);
+    hit.specular = float3(0.0f, 0.0f, 0.0f);
     return hit;
 }
 
@@ -72,15 +95,20 @@ void IntersectGroundPlane(Ray ray, inout RayHit bestHit)
         bestHit.distance = t;
         bestHit.position = ray.origin + t * ray.direction;
         bestHit.normal = float3(0.0f, 1.0f, 0.0f);
+
+        bestHit.albedo = 0.3f;
+        bestHit.specular = 0.3f;
     }
 }
 
-void IntersectSphere(Ray ray, inout RayHit bestHit, float4 sphere)
+void IntersectSphere(Ray ray, inout RayHit bestHit, Sphere sphere)
 {
+
+    
     // Calculate distance along the ray where the sphere is intersected
-    float3 d = ray.origin - sphere.xyz;
+    float3 d = ray.origin - sphere.position;
     float p1 = -dot(ray.direction, d);
-    float p2sqr = p1 * p1 - dot(d, d) + sphere.w * sphere.w;
+    float p2sqr = p1 * p1 - dot(d, d) + sphere.radius * sphere.radius;
     if (p2sqr < 0)
         return;
     float p2 = sqrt(p2sqr);
@@ -89,19 +117,29 @@ void IntersectSphere(Ray ray, inout RayHit bestHit, float4 sphere)
     {
         bestHit.distance = t;
         bestHit.position = ray.origin + t * ray.direction;
-        bestHit.normal = normalize(bestHit.position - sphere.xyz);
+        bestHit.normal = normalize(bestHit.position - sphere.position);
+
+        bestHit.albedo = sphere.albedo;
+        bestHit.specular = sphere.specular;
     }
 }
 
 // Trace the ray
 RayHit Trace(Ray ray)
 {
+    
+
     //make a new Ray hit
     RayHit bestHit = CreateRayHit();
 
-    //test the ground plane and draw a sphere
+    //create a bunch of spheres
+    uint numSpheres, stride;
+    _Spheres.GetDimensions(numSpheres, stride);
+    for (uint i = 0; i < numSpheres; i++)
+    {
+        IntersectSphere(ray, bestHit, _Spheres[i]);
+    }
     IntersectGroundPlane(ray, bestHit);
-    IntersectSphere(ray, bestHit, float4(0, 3.0f, 0, 2.0f));
     return bestHit; 
 }
 
@@ -111,17 +149,39 @@ float3 Shade(inout Ray ray, RayHit hit)
     // if geometry was hit
     if (hit.distance < 1.#INF)
     {
-        // Return the normal
-        return hit.normal * 0.5f + 0.5f;    //pixel offset?
+        // set position and offset a tiny bit along the normal
+        ray.origin = hit.position + hit.normal * 0.001f;
+
+        // reflect the ray
+        ray.direction = reflect(ray.direction, hit.normal);
+
+        // multiply energy with specular reflection
+        ray.energy *= hit.specular;
+
+        //Shadow test ray
+        bool shadow = false;
+        Ray shadowRay = CreateRay(hit.position + hit.normal * 0.001f, -1 * _DirectionalLight.xyz);
+        RayHit shadowHit = Trace(shadowRay);
+
+        if (shadowHit.distance != 1.#INF)
+        {
+            return float3(0.0f, 0.0f, 0.0f);
+        }
+
+        //find the cosine of the angle, flip output since ray and light are in opposite directions
+        //saturate to clamp values to [0,1]
+        return saturate(dot(hit.normal, _DirectionalLight.xyz) * -1) * _DirectionalLight.w * hit.albedo;
     }
     // if geometry was not hit
     else
     {
+        //erase the ray's energy, the sky doesn't reflect anything
+        ray.energy = 0.0f;
         
         // Sample the skybox and write it (same fancy math as returning the skybox)
         float theta = acos(ray.direction.y) / -PI;
         float phi = atan2(ray.direction.x, -ray.direction.z) / -PI * 0.5f;
-        return _SkyBoxTexture.SampleLevel(sampler_SkyBoxTexture, float2(phi, theta), 0).xyz;
+        return _SkyBoxTexture.SampleLevel(sampler_SkyBoxTexture, float2(phi, theta), 0).xyz * 1.1f;
     }
 }
 
@@ -139,8 +199,19 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     Ray ray = createCameraRay(uv);
 
     // Trace and shade
-    RayHit hit = Trace(ray);
-    float3 result = Shade(ray, hit);
+    float3 result = float3(0, 0, 0);
+
+    for (int i = 0; i < numReflections; i++)
+    {
+        RayHit hit = Trace(ray);
+        result += ray.energy * Shade(ray, hit);
+
+        if (!any(ray.energy))
+        {
+            break;
+        }
+    }
+
     Result[id.xy] = float4(result, 1);
 
 }
