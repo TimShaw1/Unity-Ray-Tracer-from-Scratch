@@ -126,7 +126,7 @@ public class RayTracingMaster : MonoBehaviour
         {
             Sphere sphere = spheres[i];
 
-            sphere.position.y += Mathf.Sin(Time.time / sphere.random) * 10;
+            sphere.position.y += Mathf.Sin(Time.time + sphere.position.z / 20) * 10;
 
             alsoSpheres.Add(sphere);
         }
