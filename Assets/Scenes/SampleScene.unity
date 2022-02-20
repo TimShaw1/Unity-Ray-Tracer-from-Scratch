@@ -356,7 +356,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   RayTracingShader: {fileID: 7200000, guid: df3ac013842570e46ba58c2ad5c85bc6, type: 3}
-  SkyBoxTexture: {fileID: 2800000, guid: 425c832fab38f9d438afbdee72c96f2a, type: 3}
+  SkyBoxTexture: {fileID: 2800000, guid: 9e46394346842394abb85dfa6ca2a84b, type: 3}
   speed: 0.08
   DirectionalLight: {fileID: 705507994}
   SphereRadius: {x: 3, y: 12}
